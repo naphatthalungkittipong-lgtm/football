@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เกมตบวอลเลย์บอล AR</title>
+    <!-- โหลด Tailwind CSS สำหรับตกแต่งความสวยงาม -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- โหลด MediaPipe สำหรับใช้งานกล้องและระบบตรวจจับมือ (AI) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;700;900&display=swap');
+        body { font-family: 'Prompt', sans-serif; }
+        /* ทำให้ตัวหนังสือมีขอบดำและเงา จะได้มองเห็นชัดบนกล้อง */
+        .text-outline {
+            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 4px 10px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white overflow-hidden select-none w-screen h-screen m-0 p-0">
+
+    <!-- วิดีโอซ่อนไว้สำหรับรับภาพจากกล้อง -->
+    <video id="video" class="hidden" autoplay playsinline></video>
+    
+    <!-- Canvas สำหรับแสดงผลเกม AR -->
+    <canvas id="canvas" class="absolute top-0 left-0 w-full h-full object-cover z-0"></canvas>
+
+    <!-- ส่วนติดต่อผู้ใช้ (UI) -->
+    
+    <!-- 1. หน้าจอเริ่มต้น -->
+    <div id="start-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-80 z-20 transition-opacity duration-500">
+        <div class="text-9xl mb-4">🏐</div>
+        <h1 class="text-5xl md:text-7xl font-black text-white mb-6 text-center text-outline">AR Volleyball<br>Spike!</h1>
+        <p class="text-xl md:text-2xl text-gray-200 mb-10 text-center max-w-lg">ใช้มือของคุณตบลูกวอลเลย์บอลผ่านกล้อง<br>ทำคะแนนให้ได้มากที่สุดใน <span class="text-yellow-400 font-bold text-3xl">10 วินาที</span>!</p>
+        <button onclick="initAR()" class="px-10 py-5 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-full text-3xl font-bold text-white transition transform hover:scale-110 shadow-2xl animate-pulse">
+            เริ่มเกม (Start Game)
+        </button>
+    </div>
+
+    <!-- 2. หน้าจอโหลด AI -->
+    <div id="loading-screen" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-90 z-20">
+        <div class="animate-spin rounded-full h-24 w-24 border-t-8 border-b-8 border-blue-500 mb-6"></div>
+        <h2 class="text-3xl font-bold text-white mb-2">กำลังโหลด AI และกล้อง...</h2>
+        <p class="text-gray-400 text-lg">โปรดกด "อนุญาต" (Allow) การใช้งานกล้องที่มุมซ้ายบน</p>
+    </div>
+
+    <!-- 3. นับถอยหลังก่อนเริ่ม -->
+    <div id="center-display" class="hidden absolute inset-0 flex items-center justify-center z-30 pointer-events-none text-[12rem] font-black text-white text-outline transition-all duration-300">
+        3
+    </div>
+
+    <!-- 4. แถบแสดงคะแนนและเวลา (HUD) -->
+    <div id="hud" class="hidden absolute top-0 inset-x-0 flex justify-between items-start p-6 z-10 pointer-events-none">
+        <div class="bg-white bg-opacity-90 px-6 py-3 rounded-3xl shadow-xl flex items-center border-4 border-blue-500">
+            <span class="text-2xl font-bold text-gray-800 mr-3">คะแนน:</span>
+            <span id="score-display" class="text-5xl font-black text-blue-600">0</span>
+        </div>
+        <div class="bg-white bg-opacity-90 px-6 py-3 rounded-3xl shadow-xl flex items-center border-4 border-red-500">
+            <span class="text-2xl font-bold text-gray-800 mr-3">เวลา:</span>
+            <span id="time-display" class="text-5xl font-black text-red-600">10</span>
+            <span class="text-2xl font-bold text-gray-800 ml-2">วิ</span>
+        </div>
+    </div>
+
+    <!-- 5. หน้าจอจบเกม -->
+    <div id="game-over-screen" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-90 z-20">
+        <h1 class="text-7xl font-black text-red-500 mb-6 text-outline">หมดเวลา!</h1>
+        <div class="bg-gradient-to-br from-white to-gray-200 px-16 py-10 rounded-[3rem] text-center mb-10 shadow-2xl border-8 border-blue-500 transform scale-110">
+            <p class="text-3xl text-gray-700 font-bold mb-4">คะแนนตบของคุณคือ</p>
+            <p id="final-score" class="text-9xl font-black text-blue-600 drop-shadow-lg">0</p>
+        </div>
+        <button onclick="startGame()" class="px-10 py-5 bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 rounded-full text-3xl font-bold text-white transition transform hover:scale-110 shadow-2xl">
+            เล่นอีกครั้ง (Play Again)
+        </button>
+    </div>
+
+    <script>
+        // --- ตัวแปรหลักของเกม ---
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        
+        let isInitialized = false;
+        let isFirstFrame = true;
+        let camera = null;
+        let hands = null;
+        
+        let gameState = 'MENU'; // สถานะ: MENU, COUNTDOWN, PLAYING, GAMEOVER
+        let score = 0;
+        let timeLeft = 10;
+        let timerInterval;
+        
+        // ข้อมูลลูกวอลเลย์บอล
+        let ball = { x: 0.5, y: -0.2, radius: 0.08, speedY: 0.02 };
+        let hitEffects = [];
+
+        // --- เริ่มต้นเปิดกล้องและ AI ---
+        async function initAR() {
+            if (isInitialized) {
+                startGame();
+                return;
+            }
+
+            try {
+                document.getElementById('start-screen').classList.add('hidden');
+                document.getElementById('loading-screen').classList.remove('hidden');
+
+                // ตั้งค่า AI ตรวจจับมือ
+                hands = new Hands({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }});
+                
+                hands.setOptions({
+                    maxNumHands: 2,          // ตรวจจับสูงสุด 2 มือ
+                    modelComplexity: 0,      // ใช้โมเดลแบบเร็ว
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6
+                });
+                hands.onResults(onResults);
+
+                // ตั้งค่ากล้อง
+                camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({image: videoElement});
+                    },
+                    width: 640,
+                    height: 480
+                });
+                
+                await camera.start();
+                isInitialized = true;
+            } catch (error) {
+                alert("เกิดข้อผิดพลาด กรุณาตรวจสอบว่าคุณได้อนุญาตให้เบราว์เซอร์ใช้กล้องแล้ว\nError: " + error.message);
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('start-screen').classList.remove('hidden');
+            }
+        }
+
+        // --- ลูปหลักของเกม (ทำงานทุกครั้งที่ได้ภาพจากกล้อง) ---
+        function onResults(results) {
+            // เมื่อโหลดเฟรมแรกสำเร็จ ให้เริ่มนับถอยหลังเข้าเกม
+            if (isFirstFrame) {
+                isFirstFrame = false;
+                document.getElementById('loading-screen').classList.add('hidden');
+                startGame();
+            }
+
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // กลับด้านซ้ายขวาให้เหมือนกระจก
+            canvasCtx.scale(-1, 1);
+            canvasCtx.translate(-canvasElement.width, 0);
+
+            // วาดภาพจากกล้องลงบนจอ
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (gameState === 'PLAYING') {
+                updateGame(results);
+            } else if (gameState === 'GAMEOVER') {
+                // ทำหน้าจอมืดลงตอนจบเกม
+                canvasCtx.fillStyle = "rgba(0,0,0,0.6)";
+                canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+            }
+
+            canvasCtx.restore(); // คืนค่าการกลับด้าน เพื่อใช้วาดตัวหนังสือ (ไม่งั้นจะกลับหัว)
+
+            // วาดลูกบอลและเอฟเฟกต์
+            if (gameState === 'PLAYING') {
+                drawUnflippedUI();
+            }
+        }
+
+        // --- อัปเดตตรรกะของเกม ---
+        function updateGame(results) {
+            // 1. ทำให้ลูกบอลตกลงมา
+            ball.y += ball.speedY;
+            
+            // ถ้าลูกบอลตกเลยขอบจอด้านล่าง ให้สุ่มเกิดใหม่ด้านบน
+            if (ball.y > 1.2) {
+                spawnBall();
+            }
+
+            // 2. ตรวจสอบการชนกับมือ (การตบ)
+            let hit = false;
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    // วาดเส้นโครงกระดูกมือ (เพื่อความเท่แบบ AR)
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                    drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
+
+                    // ปรับเซนเซอร์ให้เน้น "ฝ่ามือ" โดยใช้จุดฐานของนิ้วทั้ง 4 และข้อมือ
+                    // 0: ข้อมือ, 5: โคนนิ้วชี้, 9: โคนนิ้วกลาง, 13: โคนนิ้วนาง, 17: โคนนิ้วก้อย
+                    const pointsToCheck = [0, 5, 9, 13, 17]; 
+                    const aspect = canvasElement.width / canvasElement.height;
+
+                    for (let idx of pointsToCheck) {
+                        let pt = landmarks[idx];
+                        // คำนวณระยะห่างระหว่างมือกับลูกบอล
+                        let dx = (pt.x - ball.x) * aspect;
+                        let dy = pt.y - ball.y;
+                        let dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        // ถ้าระยะห่างน้อยกว่ารัศมี (เพิ่มระยะการตรวจจับเล็กน้อยให้ตบง่ายขึ้น)
+                        if (dist < ball.radius + 0.05) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if (hit) break;
+                }
+            }
+
+            // 3. เมื่อตบโดน
+            if (hit) {
+                score++;
+                document.getElementById('score-display').innerText = score;
+                addHitEffect(ball.x, ball.y);
+                spawnBall(); // เกิดลูกใหม่ทันที
+            }
+        }
+
+        // --- วาด UI และลูกบอล ---
+        function drawUnflippedUI() {
+            // วาดลูกวอลเลย์บอล
+            let visualX = (1 - ball.x) * canvasElement.width; // 1-x เพราะกล้องกลับด้าน
+            let visualY = ball.y * canvasElement.height;
+            let fontSize = Math.floor(canvasElement.height * ball.radius * 2.5);
+            
+            canvasCtx.font = `${fontSize}px sans-serif`;
+            canvasCtx.textAlign = "center";
+            canvasCtx.textBaseline = "middle";
+            canvasCtx.fillText("🏐", visualX, visualY);
+
+            // วาดตัวหนังสือ +1 เด้งขึ้นมา
+            for (let i = hitEffects.length - 1; i >= 0; i--) {
+                let effect = hitEffects[i];
+                effect.life -= 0.04; // ค่อยๆ จางลง
+                
+                if (effect.life <= 0) {
+                    hitEffects.splice(i, 1);
+                    continue;
+                }
+                
+                canvasCtx.globalAlpha = effect.life;
+                canvasCtx.font = "bold 60px 'Prompt', sans-serif";
+                canvasCtx.fillStyle = "#FFD700";
+                canvasCtx.textAlign = "center";
+                canvasCtx.lineWidth = 4;
+                canvasCtx.strokeStyle = "black";
+                
+                let hx = (1 - effect.x) * canvasElement.width;
+                let hy = effect.y * canvasElement.height - (1 - effect.life) * 150; // ลอยขึ้น
+                
+                canvasCtx.strokeText("💥 +1", hx, hy);
+                canvasCtx.fillText("💥 +1", hx, hy);
+                canvasCtx.globalAlpha = 1.0;
+            }
+        }
+
+        // --- ฟังก์ชันช่วยเหลือ ---
+        function spawnBall() {
+            ball.x = Math.random() * 0.7 + 0.15; // สุ่มแกน X ซ้าย-ขวา
+            ball.y = -0.15; // เริ่มด้านบนสุดของจอ
+            ball.speedY = 0.02 + (Math.random() * 0.02); // สุ่มความเร็วตก
+        }
+
+        function addHitEffect(x, y) {
+            hitEffects.push({ x: x, y: y, life: 1.0 });
+        }
+
+        // --- ควบคุมสเตจของเกม ---
+        function startGame() {
+            document.getElementById('hud').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            
+            let countdown = 3;
+            const centerDisplay = document.getElementById('center-display');
+            centerDisplay.classList.remove('hidden');
+            centerDisplay.innerText = countdown;
+            
+            gameState = 'COUNTDOWN';
+            
+            let countInterval = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    centerDisplay.innerText = countdown;
+                } else if (countdown === 0) {
+                    centerDisplay.innerText = "ตบเลย!";
+                } else {
+                    clearInterval(countInterval);
+                    centerDisplay.classList.add('hidden');
+                    startActualGame();
+                }
+            }, 1000);
+        }
+
+        function startActualGame() {
+            gameState = 'PLAYING';
+            score = 0;
+            timeLeft = 10; // กำหนดเวลา 10 วินาที
+            hitEffects = [];
+            spawnBall();
+
+            document.getElementById('hud').classList.remove('hidden');
+            document.getElementById('score-display').innerText = score;
+            document.getElementById('time-display').innerText = timeLeft;
+            document.getElementById('time-display').classList.remove('animate-pulse');
+
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('time-display').innerText = timeLeft;
+                
+                if (timeLeft <= 3) {
+                    document.getElementById('time-display').classList.add('animate-pulse');
+                }
+                
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            gameState = 'GAMEOVER';
+            clearInterval(timerInterval);
+            document.getElementById('time-display').classList.remove('animate-pulse');
+            document.getElementById('hud').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            document.getElementById('final-score').innerText = score;
+        }
+    </script>
+</body>
+</html>
